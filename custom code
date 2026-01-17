@@ -1,0 +1,315 @@
+/**
+ * Quick Capture
+ * 
+ * Ctrl+P → "Quick Capture" → Type your thought → Instantly added to today's Journal
+ */
+
+// Dialog CSS
+const DIALOG_CSS = `
+    .quick-capture-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        backdrop-filter: blur(12px);
+    }
+    .quick-capture-dialog {
+        background: #1a2a1f;
+        border: 1px solid #3e6f5b;
+        border-radius: 8px;
+        padding: 20px;
+        width: 500px;
+        max-width: 90vw;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .quick-capture-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: #d8e8d8;
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .quick-capture-title .ti {
+        color: #70a12b;
+        font-size: 18px;
+    }
+    .quick-capture-textarea {
+        width: 100%;
+        height: 120px;
+        background: rgba(15, 31, 20, 0.3);
+        border: 1px solid #3e6f5b;
+        border-radius: 4px;
+        padding: 10px;
+        font-family: var(--font-family);
+        font-size: 14px;
+        color: #d8e8d8;
+        resize: vertical;
+        margin-bottom: 14px;
+        transition: all 0.2s ease;
+        line-height: 1.5;
+    }
+    .quick-capture-textarea:focus {
+        outline: none;
+        border-color: #1ba962;
+        background: #142518;
+    }
+    .quick-capture-textarea::placeholder {
+        color: #5a7a5a;
+    }
+    .quick-capture-buttons {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+    .quick-capture-btn {
+        padding: 7px 14px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        border: 1px solid #3e6f5b;
+        transition: all 0.15s ease;
+        font-family: var(--font-family);
+    }
+    .quick-capture-btn-primary {
+        background: #2a5a35;
+        color: #d8e8d8;
+        border-color: #3e6f5b;
+    }
+    .quick-capture-btn-primary:hover {
+        background: #336a45;
+        border-color: #50a250;
+    }
+    .quick-capture-btn-secondary {
+        background: #1a2a1f;
+        color: #a0b0a0;
+        border-color: #2a4a2f;
+    }
+    .quick-capture-btn-secondary:hover {
+        background: #243a29;
+        color: #c0d0c0;
+    }
+`;
+
+class Plugin extends AppPlugin {
+
+    async onLoad() {
+        console.log('[Quick Capture] Loading...');
+
+        // Inject CSS
+        this.ui.injectCSS(DIALOG_CSS);
+
+        // Register the Quick Capture command
+        this.captureCommand = this.ui.addCommandPaletteCommand({
+            label: 'Quick Capture',
+            icon: 'bolt',
+            onSelected: () => this.openCaptureDialog()
+        });
+
+        console.log('[Quick Capture] Loaded - Press Ctrl+P and type "Quick Capture"');
+    }
+
+    onUnload() {
+        if (this.captureCommand) {
+            this.captureCommand.remove();
+        }
+    }
+
+    /**
+     * Open a custom translucent dialog for quick capture
+     */
+    async openCaptureDialog() {
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'quick-capture-overlay';
+
+        // Create dialog
+        const dialog = document.createElement('div');
+        dialog.className = 'quick-capture-dialog';
+
+        dialog.innerHTML = `
+            <div class="quick-capture-title">
+                <span class="ti ti-bolt"></span>
+                Quick Capture
+            </div>
+            <textarea 
+                class="quick-capture-textarea" 
+                placeholder="Type your thought here..."
+                autofocus
+            ></textarea>
+            <div class="quick-capture-buttons">
+                <button class="quick-capture-btn quick-capture-btn-secondary" data-action="cancel">
+                    Cancel
+                </button>
+                <button class="quick-capture-btn quick-capture-btn-primary" data-action="capture">
+                    Capture
+                </button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Get textarea and focus it
+        const textarea = dialog.querySelector('.quick-capture-textarea');
+        setTimeout(() => textarea.focus(), 100);
+
+        // Handle button clicks
+        const handleAction = async (action) => {
+            if (action === 'capture') {
+                const text = textarea.value.trim();
+                if (text) {
+                    overlay.remove();
+                    await this.captureToJournal(text);
+                }
+            } else {
+                overlay.remove();
+            }
+        };
+
+        dialog.querySelector('[data-action="cancel"]').addEventListener('click', () => handleAction('cancel'));
+        dialog.querySelector('[data-action="capture"]').addEventListener('click', () => handleAction('capture'));
+
+        // Handle keyboard shortcuts
+        textarea.addEventListener('keydown', (e) => {
+            // Enter (without Shift) to capture
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleAction('capture');
+            }
+            // Shift+Enter for new line (default behavior, but being explicit)
+            // (No need to handle - browser does this naturally)
+
+            // Ctrl+Enter or Cmd+Enter also captures (alternative)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                handleAction('capture');
+            }
+            // Escape to cancel
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                handleAction('cancel');
+            }
+        });
+
+        // Click overlay to close
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                handleAction('cancel');
+            }
+        });
+    }
+
+    /**
+     * Capture text to journal
+     */
+    async captureToJournal(text) {
+
+        try {
+            // Get today's journal
+            const journal = await this.getTodayJournal();
+
+            if (!journal) {
+                this.ui.addToaster({
+                    title: 'Quick Capture',
+                    message: 'Could not find today\'s journal. Create it first.',
+                    dismissible: true,
+                    autoDestroyTime: 3000,
+                });
+                return;
+            }
+
+            // Add the capture with timestamp
+            await this.addToJournal(journal, text.trim());
+
+            this.ui.addToaster({
+                title: 'Quick Capture',
+                message: '✓ Added to journal',
+                dismissible: true,
+                autoDestroyTime: 2000,
+            });
+
+        } catch (error) {
+            console.error('[Quick Capture] Error:', error);
+            this.ui.addToaster({
+                title: 'Quick Capture',
+                message: `Error: ${error.message}`,
+                dismissible: true,
+                autoDestroyTime: 3000,
+            });
+        }
+    }
+
+    /**
+     * Get today's journal record (same pattern as Telegram plugin)
+     */
+    async getTodayJournal() {
+        try {
+            const collections = await this.data.getAllCollections();
+            const journalCollection = collections.find(c => c.getName() === 'Journal');
+
+            if (!journalCollection) {
+                console.log('[Quick Capture] No Journal collection found');
+                return null;
+            }
+
+            // Journal GUIDs end with date in YYYYMMDD format
+            const today = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // "20250107"
+
+            const records = await journalCollection.getAllRecords();
+            const todayRecord = records.find(r => r.guid.endsWith(today));
+
+            return todayRecord || null;
+        } catch (e) {
+            console.error('[Quick Capture] Error getting journal:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Add text to journal with timestamp (like Telegram does)
+     */
+    async addToJournal(journal, text) {
+        // Get current time for timestamp
+        const now = new Date();
+        const timestamp = now.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+
+        // Check if SyncHub is available for markdown utilities
+        if (window.syncHub?.insertMarkdown) {
+            // Use SyncHub's markdown insertion (same as Telegram plugin)
+            const markdown = `**${timestamp}** ${text}`;
+
+            // Find the last top-level item to append after
+            const lineItems = await journal.getLineItems();
+            const topLevel = lineItems.filter(item => item.parent_guid === journal.guid);
+            const lastItem = topLevel.length > 0 ? topLevel[topLevel.length - 1] : null;
+
+            await window.syncHub.insertMarkdown(markdown, journal, lastItem);
+        } else {
+            // Fallback: simple line item creation
+            const lineItems = await journal.getLineItems();
+            const topLevel = lineItems.filter(item => item.parent_guid === journal.guid);
+            const lastItem = topLevel.length > 0 ? topLevel[topLevel.length - 1] : null;
+
+            const newItem = await journal.createLineItem(null, lastItem, 'text');
+            if (newItem) {
+                newItem.setSegments([
+                    { type: 'bold', text: timestamp },
+                    { type: 'text', text: ` ${text}` }
+                ]);
+            }
+        }
+    }
+}
