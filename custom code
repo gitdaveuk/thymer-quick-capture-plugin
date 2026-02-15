@@ -2,6 +2,7 @@
  * Quick Capture
  * 
  * Ctrl+P → "Quick Capture" → Type your thought → Instantly added to today's Journal
+ * Thanks to RobbJoseph for a fix to ensure local time is used.
  */
 
 // Dialog CSS
@@ -261,8 +262,9 @@ class Plugin extends AppPlugin {
                 return null;
             }
 
-            // Journal GUIDs end with date in YYYYMMDD format
-            const today = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // "20250107"
+            // Journal GUIDs end with date in YYYYMMDD format (use local date, not UTC)
+            const now = new Date();
+            const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
             const records = await journalCollection.getAllRecords();
             const todayRecord = records.find(r => r.guid.endsWith(today));
