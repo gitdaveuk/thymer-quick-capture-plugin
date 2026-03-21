@@ -172,8 +172,8 @@ class Plugin extends AppPlugin {
             const lineItems = await journal.getLineItems();
             const lastTopLevel = lineItems.filter(i => i.parent_guid === journal.guid).at(-1) ?? null;
 
-            const isTask = text.startsWith('[ ]');
-            const cleanText = isTask ? text.slice(3).trim() : text;
+            const isTask = text.startsWith('[ ]') || text.startsWith('[]');
+            const cleanText = isTask ? text.slice(text.startsWith('[ ]') ? 3 : 2).trim() : text;
             const segments = this.parseSegments(cleanText);
 
             if (isTask) {
