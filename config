@@ -1,21 +1,6 @@
 {
-	"ver": 2,
-	"name": "Quick Capture",
-	"icon": "bolt",
-	"item_name": "Note",
-	"description": "Quickly capture thoughts to today's journal via the command palette.",
-	"show_sidebar_items": false,
-	"show_cmdpal_items": true,
-	"views": [],
-	"fields": [],
-	"page_field_ids": [],
-	"sidebar_record_sort_field_id": "",
-	"sidebar_record_sort_dir": "desc",
-	"managed": {
-		"fields": false,
-		"views": false,
-		"sidebar": false
-	},
-	"custom": {},
-	"home": false
+  "ver": 1,
+  "name": "Quick Capture",
+  "icon": "ti-bolt",
+  "description": "Capture a thought to today's Journal page from the command palette."
 }
