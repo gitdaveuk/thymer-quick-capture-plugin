@@ -1,277 +1,228 @@
-const DIALOG_CSS = `
-    .quick-capture-overlay {
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 10000;
-        backdrop-filter: blur(8px);
-    }
-    .quick-capture-dialog {
-        background: #1e1e1e;
-        border: 1px solid #333;
-        border-radius: 10px;
-        padding: 24px;
-        width: 480px;
-        max-width: 90vw;
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-    }
-    .quick-capture-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #888;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-bottom: 12px;
-        display: flex;
-        align-items: center;
-        gap: 7px;
-    }
-    .quick-capture-title .ti {
-        color: #aaa;
-        font-size: 14px;
-    }
-    .quick-capture-textarea {
-        width: 100%;
-        height: 110px;
-        background: #141414;
-        border: 1px solid #2e2e2e;
-        border-radius: 6px;
-        padding: 10px 12px;
-        font-family: var(--font-family);
-        font-size: 14px;
-        color: #e8e8e8;
-        resize: none;
-        margin-bottom: 8px;
-        transition: border-color 0.15s ease;
-        line-height: 1.6;
-        box-sizing: border-box;
-    }
-    .quick-capture-textarea:focus {
-        outline: none;
-        border-color: #555;
-    }
-    .quick-capture-textarea::placeholder {
-        color: #444;
-    }
-    .quick-capture-hint {
-        font-size: 11px;
-        color: #444;
-        margin-bottom: 16px;
-    }
-    .quick-capture-buttons {
-        display: flex;
-        gap: 8px;
-        justify-content: flex-end;
-    }
-    .quick-capture-btn {
-        padding: 7px 16px;
-        border-radius: 6px;
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        font-family: var(--font-family);
-        border: 1px solid transparent;
-    }
-    .quick-capture-btn-primary {
-        background: #e8e8e8;
-        color: #111;
-        border-color: #e8e8e8;
-    }
-    .quick-capture-btn-primary:hover {
-        background: #fff;
-        border-color: #fff;
-    }
-    .quick-capture-btn-secondary {
-        background: transparent;
-        color: #666;
-        border-color: #2e2e2e;
-    }
-    .quick-capture-btn-secondary:hover {
-        background: #2a2a2a;
-        color: #aaa;
-    }
-`;
-
 class Plugin extends AppPlugin {
 
-    async onLoad() {
-        this.ui.injectCSS(DIALOG_CSS);
+    onLoad() {
+        this.overlay = null;
+        this.busy = false;
 
-        this.captureCommand = this.ui.addCommandPaletteCommand({
-            label: 'Quick Capture',
-            icon: 'bolt',
-            onSelected: () => this.openCaptureDialog()
+        this.ui.injectCSS(`
+            .qc-backdrop {
+                position: fixed; inset: 0; z-index: 99999;
+                display: flex; align-items: flex-start; justify-content: center;
+                padding-top: 18vh; background: rgba(0,0,0,0.35);
+            }
+            .qc-box {
+                width: min(640px, 90vw);
+                background: var(--panel-bg-color, Canvas);
+                color: var(--text-default, CanvasText);
+                border: 1px solid rgba(128,128,128,0.35);
+                border-radius: 10px;
+                box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+                padding: 12px;
+            }
+            .qc-input {
+                width: 100%; min-height: 84px; resize: vertical; box-sizing: border-box;
+                background: transparent; color: inherit; font: inherit;
+                border: none; outline: none; padding: 4px;
+            }
+            .qc-hint { font-size: 11px; opacity: 0.55; padding: 6px 4px 0; }
+        `);
+
+        this.command = this.ui.addCommandPaletteCommand({
+            label: "Quick Capture",
+            icon: "ti-bolt",
+            onSelected: () => this.openCapture(),
         });
     }
 
     onUnload() {
-        this.captureCommand?.remove();
+        this.closeCapture();
+        if (this.command) this.command.remove();
     }
 
-    async openCaptureDialog() {
-        const overlay = document.createElement('div');
-        overlay.className = 'quick-capture-overlay';
-        overlay.innerHTML = `
-            <div class="quick-capture-dialog">
-                <div class="quick-capture-title">
-                    <span class="ti ti-bolt"></span>
-                    Quick Capture
-                </div>
-                <textarea
-                    class="quick-capture-textarea"
-                    placeholder="Type your thought... ([ ] for task, @tomorrow for dates)"></textarea>
-                <div class="quick-capture-hint">Enter to capture · Shift+Enter for new line · Esc to cancel</div>
-                <div class="quick-capture-buttons">
-                    <button class="quick-capture-btn quick-capture-btn-secondary" data-action="cancel">Cancel</button>
-                    <button class="quick-capture-btn quick-capture-btn-primary" data-action="capture">Capture</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
+    // ---------------------------------------------------------------- UI
 
-        const textarea = overlay.querySelector('.quick-capture-textarea');
-        setTimeout(() => textarea.focus(), 50);
+    openCapture() {
+        if (this.overlay) return;
 
-        const close = () => overlay.remove();
+        const backdrop = document.createElement("div");
+        backdrop.className = "qc-backdrop";
+        backdrop.innerHTML = `
+            <div class="qc-box">
+                <textarea class="qc-input" placeholder="Capture to today's journal…" spellcheck="true"></textarea>
+                <div class="qc-hint">Enter to save · Shift+Enter for new line · Esc to cancel · [] = task · @date</div>
+            </div>`;
+        const input = backdrop.querySelector("textarea");
 
-        const capture = async () => {
-            const text = textarea.value.trim();
-            if (!text) return;
-            close();
-            await this.captureToJournal(text);
-        };
-
-        overlay.querySelector('[data-action="capture"]').addEventListener('click', capture);
-        overlay.querySelector('[data-action="cancel"]').addEventListener('click', close);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-        textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { e.preventDefault(); close(); }
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); capture(); }
+        backdrop.addEventListener("mousedown", (e) => {
+            if (e.target === backdrop) this.closeCapture();
         });
+        input.addEventListener("keydown", (e) => {
+            e.stopPropagation(); // keep Thymer's own shortcuts out of the way
+            if (e.key === "Escape") {
+                e.preventDefault();
+                this.closeCapture();
+            } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                this.submit(input.value);
+            }
+        });
+
+        document.body.appendChild(backdrop);
+        this.overlay = backdrop;
+        // Delay focus so the command palette finishes closing first
+        setTimeout(() => input.focus(), 50);
     }
 
-    async captureToJournal(text) {
-        try {
-            const journal = await this.getTodayJournal();
+    closeCapture() {
+        if (this.overlay) {
+            this.overlay.remove();
+            this.overlay = null;
+        }
+        this.busy = false;
+    }
 
-            if (!journal) {
-                this.ui.addToaster({
-                    title: 'Quick Capture',
-                    message: 'No Journal found for today. Make sure a Journal collection exists.',
-                    dismissible: true,
-                    autoDestroyTime: 4000,
-                });
+    toast(title, message) {
+        this.ui.addToaster({ title, message, dismissible: true, autoDestroyTime: 2500 });
+    }
+
+    // ---------------------------------------------------------------- Capture
+
+    async submit(raw) {
+        const text = (raw || "").trim();
+        if (!text) return this.closeCapture();
+        if (this.busy) return;
+        this.busy = true;
+
+        try {
+            const record = await this.getTodayJournalRecord();
+            if (!record) {
+                this.busy = false;
+                this.toast("Quick Capture", "Couldn't find a Journal page. Is the Journal plugin enabled?");
                 return;
             }
 
-            const lineItems = await journal.getLineItems();
-            const lastTopLevel = lineItems.filter(i => i.parent_guid === journal.guid).at(-1) ?? null;
+            // Append after the last top-level item on the page
+            const existing = await record.getLineItems(false);
+            const top = existing.filter((i) => !i.parent_guid || i.parent_guid === record.guid);
+            let last = top.length ? top[top.length - 1] : null;
 
-            const isTask = text.startsWith('[ ]') || text.startsWith('[]');
-            const cleanText = isTask ? text.slice(text.startsWith('[ ]') ? 3 : 2).trim() : text;
-            const segments = this.parseSegments(cleanText);
-
-            if (isTask) {
-                const newItem = await journal.createLineItem(null, lastTopLevel, 'task', null, null);
-                if (newItem) {
-                    await newItem.setTaskStatus('none');
-                    await newItem.setSegments(segments);
-                }
-            } else {
-                const now = new Date();
-                const timestamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-                const newItem = await journal.createLineItem(null, lastTopLevel, 'text', null, null);
-                if (newItem) {
-                    await newItem.setSegments([
-                        { type: 'bold', text: timestamp },
-                        { type: 'text', text: '  ' },
-                        ...segments,
-                    ]);
+            const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+            for (const line of lines) {
+                const parsed = this.parseLine(line);
+                const item = await record.createLineItem(null, last, parsed.type, parsed.segments, null);
+                if (item) {
+                    last = item;
+                    if (parsed.done) await item.setTaskStatus("done");
                 }
             }
 
-            this.ui.addToaster({
-                title: 'Quick Capture',
-                message: '✓ Added to today\'s journal',
-                dismissible: false,
-                autoDestroyTime: 2000,
-            });
-
-        } catch (error) {
-            console.error('[Quick Capture] Error:', error);
-            this.ui.addToaster({
-                title: 'Quick Capture',
-                message: `Error: ${error.message}`,
-                dismissible: true,
-                autoDestroyTime: 4000,
-            });
+            this.closeCapture();
+            this.toast("Captured", lines.length > 1 ? `${lines.length} lines added to today` : "Added to today");
+        } catch (err) {
+            console.error("[Quick Capture]", err);
+            this.busy = false;
+            this.toast("Quick Capture failed", String(err && err.message ? err.message : err));
         }
     }
 
-    parseSegments(text) {
-        const segments = [];
-        // Try up to 3-word phrases: @next monday, @next week, @tomorrow, @today etc
-        // For each @ token, try longest match first, fall back to shorter
-        const re = /@([\w]+(?:\s+[\w]+){0,2})/g;
-        let last = 0;
-        let match;
-
-        while ((match = re.exec(text)) !== null) {
-            const fullPhrase = match[1];
-            const words = fullPhrase.split(/\s+/);
-
-            // Try longest phrase first, then shorter fallbacks
-            let parsed = null;
-            let parsedPhrase = null;
-            for (let len = words.length; len >= 1; len--) {
-                const phrase = words.slice(0, len).join(' ');
-                const dt = DateTime.parseDateTimeString(phrase);
-                if (dt) {
-                    parsed = dt;
-                    parsedPhrase = match[0].slice(0, 1 + words.slice(0, len).join(' ').length);
-                    // Adjust regex lastIndex to account for unused words
-                    const unusedText = words.slice(len).join(' ');
-                    if (unusedText) {
-                        re.lastIndex -= unusedText.length + 1; // +1 for the space
-                    }
-                    break;
-                }
-            }
-
-            if (parsed) {
-                // Add text before this match
-                if (match.index > last) {
-                    segments.push({ type: 'text', text: text.slice(last, match.index) });
-                }
-                segments.push({ type: 'datetime', text: parsed.value() });
-                last = match.index + 1 + words.slice(0, parsedPhrase.length).join(' ').length;
-                // Recalculate last based on what we actually consumed
-                last = re.lastIndex;
-            }
-            // If nothing parsed, leave as plain text — lastIndex advances naturally
-        }
-
-        // Any remaining text
-        if (last < text.length) {
-            segments.push({ type: 'text', text: text.slice(last) });
-        }
-
-        return segments.length > 0 ? segments : [{ type: 'text', text }];
-    }
-
-    async getTodayJournal() {
+    async getTodayJournalRecord() {
         const collections = await this.data.getAllCollections();
-        const journalCollection = collections.find(c => c.isJournalPlugin());
-        if (!journalCollection) return null;
+        const journal = collections.find((c) => c.isJournalPlugin());
+        if (!journal) return null;
 
-        const user = this.data.getActiveUsers()[0];
-        if (!user) return null;
+        const users = this.data.getActiveUsers();
+        if (!users.length) return null;
 
-        return journalCollection.getJournalRecord(user, DateTime.parseDateTimeString('today'));
+        // The SDK has no "current user" call. Optionally set
+        // "custom": { "user_email": "you@example.com" } in this plugin's config
+        // if you're in a multi-user workspace.
+        const cfg = this.getConfiguration();
+        const email = cfg && cfg.custom && cfg.custom.user_email;
+        const user = (email && users.find((u) => u.getEmail() === email)) || users[0];
+
+        return journal.getJournalRecord(user, new DateTime());
+    }
+
+    // ---------------------------------------------------------------- Parsing
+
+    parseLine(line) {
+        let type = "text";
+        let done = false;
+        let body = line;
+
+        // "[] thing" or "[ ] thing" -> task; "[x] thing" -> completed task
+        const m = body.match(/^\[\s?([xX]?)\s?\]\s*/);
+        if (m) {
+            type = "task";
+            done = m[1] !== "";
+            body = body.slice(m[0].length);
+        }
+
+        return { type, done, segments: this.buildSegments(body) };
+    }
+
+    /**
+     * Turns text into segments. "@<date expression>" becomes a datetime segment.
+     * Tries the longest run of words first (max 6) so "@next week" wins over "@next".
+     */
+    buildSegments(text) {
+        const segments = [];
+        let buffer = "";
+        let i = 0;
+
+        while (i < text.length) {
+            const atStart = text[i] === "@" && (i === 0 || /\s/.test(text[i - 1]));
+            if (atStart) {
+                const hit = this.tryParseDate(text, i + 1);
+                if (hit) {
+                    this.pushText(segments, buffer);
+                    buffer = "";
+                    segments.push({ type: "datetime", text: hit.value });
+                    i = hit.end;
+                    continue;
+                }
+            }
+            buffer += text[i];
+            i++;
+        }
+        this.pushText(segments, buffer);
+
+        if (!segments.length) segments.push({ type: "text", text: "" });
+        return segments;
+    }
+
+    tryParseDate(text, start) {
+        const rest = text.slice(start);
+        const wordEnds = [];
+        const re = /\S+/g;
+        let w;
+        while ((w = re.exec(rest)) && wordEnds.length < 6) {
+            wordEnds.push(w.index + w[0].length);
+        }
+
+        for (let n = wordEnds.length; n >= 1; n--) {
+            let candidate = rest.slice(0, wordEnds[n - 1]);
+            const trailing = (candidate.match(/[.,;:!?)]+$/) || [""])[0]; // leave punctuation as text
+            candidate = candidate.slice(0, candidate.length - trailing.length);
+            if (!candidate) continue;
+
+            const dt = DateTime.parseDateTimeString(candidate);
+            if (dt) {
+                return { value: dt.value(), end: start + candidate.length };
+            }
+        }
+        return null;
+    }
+
+    // Splits plain text into text / link / hashtag segments
+    pushText(segments, str) {
+        if (!str) return;
+        const parts = str.split(/(https?:\/\/[^\s]+|(?:^|(?<=\s))#[A-Za-z][\w-]*)/g);
+        for (const part of parts) {
+            if (!part) continue;
+            if (/^https?:\/\//.test(part)) segments.push({ type: "link", text: part });
+            else if (/^#[A-Za-z]/.test(part)) segments.push({ type: "hashtag", text: part });
+            else segments.push({ type: "text", text: part });
+        }
     }
 }
